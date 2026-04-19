@@ -113,8 +113,14 @@ def quantized_kwargs(precision: str, for_: str = "seq2seq") -> Dict[str, Any]:
         dtype_kw:            torch_dtype,
         "low_cpu_mem_usage": True,
     }
-    if cuda_available():
-        kwargs["device_map"] = "auto"
+    # NOTE: we intentionally do NOT set `device_map="auto"` here.
+    # With accelerate>=1.0, "auto" on a single-GPU machine lands the
+    # whole model on cuda:0 (fine), but on boxes where accelerate
+    # partially resolves (version drift, pip cache surprises) "auto"
+    # can split layers across cuda:0/cpu, which then blows up later
+    # at `inputs.to(model.device)` with "Expected all tensors on the
+    # same device". The caller (load_base_llm) now does an explicit
+    # `.to("cuda")` after load — one device, one place, no magic.
     return kwargs
 
 

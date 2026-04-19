@@ -233,21 +233,51 @@ def build_system(cfg):
                           num_beams=cfg["generator"]["num_beams"])
 
     # 7) learned router (optional — only if cfg says to use it)
+    #
+    # READ-ONLY contract: evaluation must not mutate training artifacts
+    # unless the user has opted in explicitly. Three gates control this:
+    #
+    #   (a) cfg.agent.router_autotrain_in_eval = true
+    #       → config-level opt-in; eval will train + save the router on
+    #         first run. Intended for dev/demo configs.
+    #   (b) env COPILOT_ALLOW_EVAL_TRAIN=1
+    #       → one-off override; same effect as (a) but per-run.
+    #   (c) neither set
+    #       → missing checkpoint raises FileNotFoundError with an
+    #         actionable message pointing at `training.train --stage router`.
     learned_router = None
-    if cfg.get("agent", {}).get("router") == "learned":
-        router_path = cfg.get("agent", {}).get("router_path",
-                                                "models/checkpoints/router.npz")
+    agent_cfg = cfg.get("agent", {}) or {}
+    if agent_cfg.get("router") == "learned":
+        router_path = agent_cfg.get("router_path",
+                                      "models/checkpoints/router.npz")
         try:
             from training.router import LearnedRouter, default_router
             if os.path.exists(router_path):
                 learned_router = LearnedRouter.load(router_path, encoder=encoder)
                 print(f"[eval] loaded learned router from {router_path}")
             else:
-                print(f"[eval] training learned router (no checkpoint at {router_path})")
+                cfg_allows = bool(agent_cfg.get("router_autotrain_in_eval", False))
+                env_allows = os.environ.get("COPILOT_ALLOW_EVAL_TRAIN", "0") == "1"
+                if not (cfg_allows or env_allows):
+                    raise FileNotFoundError(
+                        f"Learned router checkpoint not found at {router_path!r}. "
+                        f"Evaluation is read-only by design. Either:\n"
+                        f"  • train it first:\n"
+                        f"      python -m training.train --stage router --config {args_config_hint(cfg)}\n"
+                        f"  • set `agent.router_autotrain_in_eval: true` in the config, or\n"
+                        f"  • export COPILOT_ALLOW_EVAL_TRAIN=1 for a one-off run."
+                    )
+                source = "config flag" if cfg_allows else "COPILOT_ALLOW_EVAL_TRAIN"
+                print(f"[eval] WARNING: {source} enabled — training learned "
+                      f"router on the fly. This means eval is mutating "
+                      f"artifacts; do NOT use for reproducible benchmarks.")
                 learned_router = default_router(save_to=router_path)
                 print(f"[eval] learned router trained and saved to {router_path}")
+        except FileNotFoundError:
+            # re-raise so the user sees the actionable message and eval stops
+            raise
         except Exception as e:
-            print(f"[eval] WARNING: could not load/train learned router ({e}); "
+            print(f"[eval] WARNING: could not load learned router ({e}); "
                   f"falling back to keyword router")
             learned_router = None
 

@@ -27,14 +27,29 @@ def load_base_llm(model_id: str, dtype: str = "float16") -> Tuple:
 
     If the requested precision is not available on the current hardware
     (e.g. fp16 without a GPU), the helper downgrades with a warning.
+
+    Device placement: the model is moved to cuda:0 explicitly when CUDA
+    is available, EXCEPT for int8 which uses bitsandbytes' own
+    `device_map="auto"` machinery (it must own placement so it can
+    register custom buffers in the right place).
     """
-    torch.cuda.empty_cache() if cuda_available() else None
+    if cuda_available():
+        torch.cuda.empty_cache()
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     kwargs = quantized_kwargs(dtype, for_="seq2seq")
     model = AutoModelForSeq2SeqLM.from_pretrained(model_id, **kwargs)
     model.eval()
+    # int8/bitsandbytes brings its own device_map; never .to() those.
+    is_int8 = "quantization_config" in kwargs
+    if cuda_available() and not is_int8:
+        model = model.to("cuda")
     if cuda_available():
-        print(f"[base_model] {model_id}  precision={dtype}  VRAM={vram_gb():.2f}GB")
+        try:
+            actual_device = next(model.parameters()).device
+        except StopIteration:
+            actual_device = "?"
+        print(f"[base_model] {model_id}  precision={dtype}  "
+              f"device={actual_device}  VRAM={vram_gb():.2f}GB")
     return model, tokenizer
 
 

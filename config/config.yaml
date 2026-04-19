@@ -66,6 +66,12 @@ agent:
   top_k:       5
   synthesis_top_k: 8
   router:      "keyword"        # "keyword" (fast, deterministic) or "learned" (MiniLM + logistic head)
+  # When router == "learned" and the checkpoint is missing, eval will
+  # normally REFUSE to train it (eval is read-only by design). Set this
+  # to true for dev/demo configs where convenience matters more than
+  # strict reproducibility. The env var COPILOT_ALLOW_EVAL_TRAIN=1 is
+  # the equivalent one-off override.
+  router_autotrain_in_eval: false
 
 eval:
   k_values:    [5, 10, 15, 20]
