@@ -1,0 +1,76 @@
+# Customer Support Copilot — central config
+# Every tunable hyperparameter lives here so the report can cite stable values.
+
+project_root: "."
+seed: 42
+
+data:
+  raw_path:        "data/raw/multidoc2dial_raw.json"
+  processed_path:  "data/processed/chunks.json"
+  train_split:     "data/splits/train.json"
+  test_split:      "data/splits/test.json"
+  chunk_size:      150       # words per chunk
+  chunk_overlap:   30
+  train_ratio:     0.8       # document-level split, not chunk-level
+
+embeddings:
+  base_model:        "sentence-transformers/all-MiniLM-L6-v2"
+  fine_tuned_path:   "models/checkpoints/biencoder_ft"
+  index_path_base:   "data/processed/faiss_index.bin"
+  index_path_ft:     "data/processed/faiss_index_ft.bin"
+  dtype:             "float16"      # auto-downgraded to float32 on CPU
+
+fusion:                       # learnable α·cos + β·lex
+  lr:          0.5
+  momentum:    0.9
+  grad_clip:   5.0
+  n_epochs:    80
+  n_triplets:  300
+
+reranker:
+  model:       "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  max_length:  512
+  top_n:       5
+  dtype:       "float16"          # auto-downgraded to float32 on CPU
+
+generator:
+  base_model:   "google/flan-t5-large"
+  dtype:        "float16"
+  max_new_tokens: 250
+  num_beams:    2
+  dora_path:    "models/checkpoints/dora_adapters"
+
+dora:
+  r:              8
+  alpha:          16
+  dropout:        0.05
+  target_modules: ["q", "v"]
+
+dpo:
+  beta:      0.1
+  epochs:    3
+  lr:        1.0e-4
+  grad_ckpt: true
+
+cgra:
+  tau:         0.45           # trigger WebScraper if ID < tau
+  tau_min:     0.20           # escalate if augmented ID < tau_min
+  a_id:        0.4            # coverage weight
+  b_id:        0.4            # density weight
+  g_id:        0.2            # specificity weight
+
+grounding:
+  threshold:   0.08           # below → escalate
+
+agent:
+  top_k:       5
+  synthesis_top_k: 8
+  router:      "keyword"        # "keyword" (fast, deterministic) or "learned" (MiniLM + logistic head)
+
+eval:
+  k_values:    [5, 10, 15, 20]
+  n_queries:   100            # hardcoded + sampled
+
+serving:
+  host:   "0.0.0.0"
+  port:   8000

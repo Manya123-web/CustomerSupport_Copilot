@@ -1,0 +1,22 @@
+# FULL system config — all tuned components enabled.
+extends: "config.yaml"
+name: "full"
+
+embeddings:
+  use_fine_tuned: true
+
+fusion:
+  use_learnable: true
+
+reranker:
+  enabled:  true
+
+cgra:
+  enabled:  true
+
+generator:
+  use_dora: true
+
+agent:
+  use_tool_loop: true
+  use_grounding_recheck: true

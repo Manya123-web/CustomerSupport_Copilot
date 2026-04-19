@@ -1,0 +1,26 @@
+# BASELINE config — retrieval + answer, no tools/policy/tuning.
+# This exists SPECIFICALLY to satisfy the rubric requirement of a labelled
+# baseline vs full-system comparison on the same eval set.
+
+extends: "config.yaml"
+
+name: "baseline"
+
+embeddings:
+  use_fine_tuned: false       # frozen all-MiniLM-L6-v2
+
+fusion:
+  use_learnable: false        # α=1.0, β=0.0 → pure cosine
+
+reranker:
+  enabled:   false            # no cross-encoder
+
+cgra:
+  enabled:   false            # no information-density gate, no web fallback
+
+generator:
+  use_dora:  false            # base Flan-T5 only, no DPO
+
+agent:
+  use_tool_loop: false        # direct retrieve → generate, no escalation
+  use_grounding_recheck: false
