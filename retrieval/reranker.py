@@ -9,6 +9,7 @@ gate can read post-rerank confidence.
 from __future__ import annotations
 from typing import List, Dict, Any
 
+import numpy as np
 from sentence_transformers import CrossEncoder
 
 from models.quantization import quantize_sentence_transformer, cuda_available
@@ -25,22 +26,13 @@ class CEReranker:
             halves VRAM and is ~1.4x faster; "float32" on CPU (no fp16
             hardware support).
         """
-        # CrossEncoder accepts a `device` kwarg in sentence-transformers
-        # >=2.6; passing it explicitly avoids the silent CPU fallback that
-        # happens when the wrapped HF model isn't moved to the active GPU.
         target_device = "cuda" if cuda_available() else "cpu"
         try:
             self.model = CrossEncoder(model_name, max_length=max_length,
                                        device=target_device)
         except TypeError:
-            # Older sentence-transformers signatures don't take `device`
             self.model = CrossEncoder(model_name, max_length=max_length)
-        # Apply precision after construction (cast happens in place)
         self.model = quantize_sentence_transformer(self.model, dtype)
-        # Make sure the underlying HF model lives on the target device
-        # AFTER the dtype cast — quantize_sentence_transformer only casts
-        # dtype, never device, so on GPU machines we'd otherwise silently
-        # run inference on CPU.
         try:
             if hasattr(self.model, "model") and hasattr(self.model.model, "to"):
                 self.model.model = self.model.model.to(target_device)
@@ -51,7 +43,32 @@ class CEReranker:
                top_n: int = 5) -> List[Dict[str, Any]]:
         if not chunks:
             return chunks
-        scores = self.model.predict([(query, c["text"]) for c in chunks])
+
+        # FIX: newer sentence-transformers expects list[list[str]] (pairs)
+        # *not* list[tuple]. Passing tuples makes predict() wrap the input
+        # into a BatchEncoding whose __getitem__ then refuses the tensor
+        # 2-D slice `[:, [-1, 0]]` inside BERT's padding-check, raising
+        #   TypeError: list indices must be integers or slices, not tuple
+        pairs: List[List[str]] = [[query, c["text"]] for c in chunks]
+
+        # Request numpy output explicitly so the return type is stable
+        # across sentence-transformers versions. `predict()` on a single
+        # pair returns a 0-d array; `.reshape(-1)` normalises it to 1-d.
+        scores = self.model.predict(
+            pairs,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+        )
+        scores = np.asarray(scores, dtype=np.float32).reshape(-1)
+
+        # Defensive: the number of returned scores MUST equal len(chunks).
+        # If it doesn't, we have a silent tokenizer truncation bug upstream
+        # and we want to know about it NOW instead of mis-attributing scores.
+        assert scores.shape[0] == len(chunks), (
+            f"reranker returned {scores.shape[0]} scores "
+            f"for {len(chunks)} chunks"
+        )
+
         for c, s in zip(chunks, scores):
             c["ce_score"] = float(s)
         return sorted(chunks, key=lambda x: x["ce_score"], reverse=True)[:top_n]

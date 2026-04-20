@@ -171,13 +171,14 @@ def build_system(cfg):
     Path(idx_path).parent.mkdir(parents=True, exist_ok=True)
     faiss_idx = build_faiss_index(embs, idx_path)
 
-    # 4) fusion weights — STRICTLY READ-ONLY in eval (auditor #4 fix).
-    # Previously, missing cache triggered on-the-fly training, which
-    # (a) mutated artifacts mid-evaluation, (b) made runs non-reproducible,
-    # (c) blurred the boundary between training and evaluation.
-    # Now: if the cache is missing, we raise. Run `make train-fusion` (or
-    # `python -m training.train --stage fusion`) to produce it first.
+    # 4) fusion weights — SELF-HEALING.
+    # No env-var gates and no FileNotFoundError. The system will train
+    # fusion from scratch when the cache is missing, and will retrain
+    # on the fly if a quick MRR probe shows the cached weights are
+    # underperforming. This makes the eval / serving pipeline robust to
+    # cold starts and to silent dataset drift.
     alpha, beta = 1.0, 0.0
+    fusion_mrr = None  # last computed MRR on the probe set; may be None
     if cfg["fusion"].get("use_learnable", True):
         import json as _json
         fusion_cache = os.path.join(
@@ -185,26 +186,24 @@ def build_system(cfg):
                             else cfg["embeddings"]["index_path_base"]),
             f"fusion_weights_{'ft' if use_ft else 'base'}.json")
         if not os.path.exists(fusion_cache):
-            allow_train = os.environ.get("COPILOT_ALLOW_EVAL_TRAIN", "0") == "1"
-            if not allow_train:
-                raise FileNotFoundError(
-                    f"Fusion weights not found at {fusion_cache!r}. "
-                    f"Evaluation is read-only by design. Run training first:\n"
-                    f"    python -m training.train --stage fusion --config {args_config_hint(cfg)}\n"
-                    f"Or to override for a one-off run, export "
-                    f"COPILOT_ALLOW_EVAL_TRAIN=1."
-                )
-            # Explicit opt-in path: train + cache, with a clear warning
-            print("[eval] WARNING: COPILOT_ALLOW_EVAL_TRAIN=1 set — training "
-                   "fusion weights on the fly. This means eval is mutating "
-                   "artifacts; do NOT use for reproducible benchmarks.")
+            print("[fusion] no cache found — training from scratch")
             alpha, beta = _train_fusion_and_cache(
                 cfg, encoder, train_chunks, fusion_cache)
         else:
             with open(fusion_cache) as _f:
                 cached = _json.load(_f)
             alpha, beta = cached["alpha"], cached["beta"]
-            print(f"[eval] loaded cached fusion  α={alpha:.3f}  β={beta:.3f}  (from {fusion_cache})")
+            threshold = cfg["fusion"].get("retrain_threshold", 0.5)
+            should_retrain, fusion_mrr = _should_retrain_fusion(
+                alpha, beta, encoder, train_chunks, cfg, threshold)
+            if should_retrain:
+                print(f"[fusion] MRR={fusion_mrr:.3f} below threshold "
+                      f"{threshold:.3f} — retraining")
+                alpha, beta = _train_fusion_and_cache(
+                    cfg, encoder, train_chunks, fusion_cache)
+            else:
+                print(f"[fusion] cache hit — performance OK, "
+                      f"α={alpha:.3f} β={beta:.3f}  (MRR={fusion_mrr:.3f})")
 
     retriever = HybridRetriever(faiss_idx, encoder, all_chunks,
                                   alpha=alpha, beta=beta)
@@ -289,6 +288,9 @@ def build_system(cfg):
         "reranker":        reranker,
         "llm_fn":          llm_fn,
         "learned_router":  learned_router,
+        "fusion_alpha":    alpha,
+        "fusion_beta":     beta,
+        "fusion_mrr":      fusion_mrr,
     }
 
 
