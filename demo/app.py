@@ -5,7 +5,7 @@ Stand-alone FastAPI demo with per-session conversation memory.
 
 Run
 ---
-    uvicorn demo.app:app --host 0.0.0.0 --port 8000
+    uvicorn demo.app:app --host 127.0.0.1 --port 8000
 
 Query
 -----

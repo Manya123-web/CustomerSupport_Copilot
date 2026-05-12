@@ -48,7 +48,7 @@ demo:
 	$(PY) -m demo.cli --config config/full.yaml
 
 api:
-	uvicorn demo.app:app --host 0.0.0.0 --port 8000
+	uvicorn demo.app:app --host 127.0.0.1 --port 8000
 
 clean:
 	rm -rf experiments/results/*.json
