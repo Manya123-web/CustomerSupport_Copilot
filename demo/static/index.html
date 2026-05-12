@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Customer Support Copilot</title>
+<style>
+  :root {
+    --bg: #0f1115; --fg: #e6e8eb; --muted: #9aa3ad;
+    --card: #161a22; --line: #232a35; --accent: #5b9eff;
+    --good: #4ade80; --bad: #f87171; --warn: #fbbf24;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+      Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--fg);
+    line-height: 1.5;
+  }
+  header {
+    padding: 18px 24px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 16px;
+  }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  main { max-width: 920px; margin: 0 auto; padding: 24px; }
+  form { display: flex; gap: 8px; margin-bottom: 16px; }
+  input[type="text"] {
+    flex: 1; padding: 10px 12px; background: var(--card); color: var(--fg);
+    border: 1px solid var(--line); border-radius: var(--radius);
+    font-size: 14px;
+  }
+  input[type="text"]:focus { outline: none; border-color: var(--accent); }
+  button {
+    padding: 10px 16px; background: var(--accent); color: #0b1220;
+    border: 0; border-radius: var(--radius); font-weight: 600;
+    cursor: pointer; font-size: 14px;
+  }
+  button:disabled { opacity: 0.5; cursor: progress; }
+  button.secondary {
+    background: transparent; color: var(--muted); border: 1px solid var(--line);
+  }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .meta {
+    color: var(--muted); font-size: 12px; margin-bottom: 14px;
+  }
+  .answer-card, .trace-card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 16px; margin-bottom: 14px;
+  }
+  .answer-card h3 {
+    margin: 0 0 8px; font-size: 13px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .answer-text { white-space: pre-wrap; font-size: 15px; }
+  .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .pill {
+    background: #1f2733; border: 1px solid var(--line); color: var(--muted);
+    border-radius: 999px; padding: 3px 10px; font-size: 12px;
+  }
+  .pill.good { color: var(--good); border-color: #1f3a2a; }
+  .pill.bad  { color: var(--bad);  border-color: #3a1f1f; }
+  .pill.warn { color: var(--warn); border-color: #3a2f1f; }
+  details { margin-top: 12px; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  pre {
+    background: #0b0e13; border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px; overflow-x: auto; font-size: 12px; color: #c6d0db;
+  }
+  .citations {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px;
+  }
+  .cite {
+    background: #1f2733; border: 1px solid var(--line); color: var(--fg);
+    border-radius: 6px; padding: 4px 8px; font-family: ui-monospace, monospace;
+    font-size: 12px;
+  }
+  .err { color: var(--bad); }
+  .empty { color: var(--muted); font-style: italic; }
+  .ticket { color: var(--warn); font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Customer Support Copilot</h1>
+  <span class="sub">backend: <code>POST /query</code></span>
+</header>
+
+<main>
+  <form id="q-form" autocomplete="off">
+    <input id="q-input" type="text" placeholder="Ask a question, e.g. 'What documents do I need to apply for retirement benefits?'" required />
+    <button id="q-submit" type="submit">Ask</button>
+    <button id="q-reset"  type="button" class="secondary" title="Clear conversation memory for this session">Reset</button>
+  </form>
+
+  <div class="meta">
+    Session: <code id="sid"></code> &middot; <a href="/docs" style="color: var(--muted);">/docs</a> &middot; <a href="/api" style="color: var(--muted);">/api</a>
+  </div>
+
+  <div id="result"></div>
+</main>
+
+<script>
+// Stable session id per browser tab (keeps multi-turn memory working).
+const sid = (() => {
+  let s = sessionStorage.getItem("copilot-sid");
+  if (!s) {
+    s = "ui-" + Math.random().toString(36).slice(2, 10);
+    sessionStorage.setItem("copilot-sid", s);
+  }
+  return s;
+})();
+document.getElementById("sid").textContent = sid;
+
+const $input  = document.getElementById("q-input");
+const $submit = document.getElementById("q-submit");
+const $reset  = document.getElementById("q-reset");
+const $result = document.getElementById("result");
+
+function pct(x) { return (Math.max(0, Math.min(1, x)) * 100).toFixed(0) + "%"; }
+function fmtMs(ms) {
+  if (ms == null) return "";
+  if (ms < 1000) return Math.round(ms) + " ms";
+  return (ms / 1000).toFixed(2) + " s";
+}
+function gpClass(g) {
+  if (g >= 0.5) return "good";
+  if (g >= 0.2) return "warn";
+  return "bad";
+}
+
+function render(resp) {
+  const cites = (resp.citations || []).map(c => `<span class="cite">${escapeHtml(c)}</span>`).join("");
+  const ticket = resp.ticket
+    ? `<div class="ticket">Ticket opened: ${escapeHtml(resp.ticket.ticket_id || "")} (${escapeHtml(resp.ticket.category || "")}/${escapeHtml(resp.ticket.severity || "")})</div>`
+    : "";
+  $result.innerHTML = `
+    <div class="answer-card">
+      <h3>Answer</h3>
+      <div class="answer-text">${escapeHtml(resp.final_answer || "")}</div>
+      ${ticket}
+      ${cites ? `<div class="citations">${cites}</div>` : ""}
+      <div class="pills">
+        <span class="pill ${gpClass(resp.grounding_score)}">grounding ${pct(resp.grounding_score)}</span>
+        <span class="pill">id ${pct(resp.id_score)}</span>
+        <span class="pill">${fmtMs(resp.latency_ms)}</span>
+      </div>
+    </div>
+    <div class="trace-card">
+      <details>
+        <summary>Tool trace (${(resp.tool_trace || []).length} step${(resp.tool_trace || []).length === 1 ? "" : "s"})</summary>
+        <pre>${escapeHtml(JSON.stringify(resp.tool_trace || [], null, 2))}</pre>
+      </details>
+    </div>
+  `;
+}
+
+function renderError(msg) {
+  $result.innerHTML = `<div class="answer-card"><h3>Error</h3><div class="answer-text err">${escapeHtml(msg)}</div></div>`;
+}
+
+function escapeHtml(s) {
+  return String(s == null ? "" : s)
+    .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+}
+
+document.getElementById("q-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const q = $input.value.trim();
+  if (!q) return;
+  $submit.disabled = true; $submit.textContent = "Thinking…";
+  $result.innerHTML = `<div class="answer-card empty">Querying /query …</div>`;
+  try {
+    const r = await fetch("/query", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: q, session_id: sid }),
+    });
+    if (!r.ok) {
+      const txt = await r.text();
+      renderError(`HTTP ${r.status}: ${txt.slice(0, 500)}`);
+    } else {
+      const resp = await r.json();
+      render(resp);
+    }
+  } catch (err) {
+    renderError(String(err));
+  } finally {
+    $submit.disabled = false; $submit.textContent = "Ask";
+  }
+});
+
+$reset.addEventListener("click", async () => {
+  try {
+    await fetch(`/session/${encodeURIComponent(sid)}/reset`, { method: "POST" });
+    $result.innerHTML = `<div class="answer-card empty">Session memory cleared.</div>`;
+  } catch (e) {
+    renderError(String(e));
+  }
+});
+</script>
+</body>
+</html>

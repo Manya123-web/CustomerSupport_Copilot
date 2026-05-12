@@ -38,9 +38,12 @@ from contextlib import asynccontextmanager
 from functools import partial
 from typing import Dict, Optional
 
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from utils.config import load_config
@@ -87,8 +90,28 @@ app.add_middleware(
 )
 
 
-@app.get("/")
+# ── Static UI ────────────────────────────────────────────────────────────────
+# A minimal single-page HTML client lives in demo/static/. Mounting under
+# /static and serving index.html at "/" gives a browser-friendly UI without
+# changing any of the API endpoints below.
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+_INDEX_FILE = _STATIC_DIR / "index.html"
+if _STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+
+
+@app.get("/", include_in_schema=False)
 def root():
+    """Serve the HTML UI when present; fall back to the legacy JSON probe."""
+    if _INDEX_FILE.is_file():
+        return FileResponse(str(_INDEX_FILE))
+    return JSONResponse({"status": "ok",
+                         "message": "Customer Support Copilot API is running"})
+
+
+@app.get("/api")
+def api_root():
+    """Legacy JSON health probe (was previously served at '/')."""
     return {"status": "ok",
             "message": "Customer Support Copilot API is running"}
 
