@@ -19,7 +19,7 @@ Thumbs.db
 data/processed/
 data/splits/
 models/checkpoints/
-experiments/results/
+# experiments/results/
 
 # Environment
 .env
