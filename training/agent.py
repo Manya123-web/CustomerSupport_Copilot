@@ -57,10 +57,10 @@ POLICY_KEYWORDS = ["policy", "section", "regulation", "rule", "statute"]
 def select_tool(query: str) -> str:
     q = query.lower()
     if any(k in q for k in TICKET_KEYWORDS):
-        return "CreateTicket"
+        return "EscalateIssue"
     if any(k in q for k in POLICY_KEYWORDS):
-        return "GetPolicy"
-    return "SearchKB"
+        return "PolicyFetch"
+    return "KBLookup"
 
 
 # ── Policy-topic to section_id mapper ────────────────────────────────────────
@@ -267,7 +267,7 @@ def run_agent(query: str,
         return AgentResponse(
             final_answer=answer, citations=cites,
             grounding_score=gs, id_score=0.0,
-            tool_trace=[{"step": 1, "tool": "SearchKB_baseline"}],
+            tool_trace=[{"step": 1, "tool": "KBLookup_baseline"}],
             latency_ms=(time.perf_counter() - t0) * 1000)
 
     # ── full tool loop ───────────────────────────────────────────────────────
@@ -286,15 +286,15 @@ def run_agent(query: str,
     step = {"step": 1, "tool": tool, "router": router_kind}
 
     # (2) build arguments
-    if tool == "CreateTicket":
+    if tool == "EscalateIssue":
         cat = ("account"  if any(k in q_lower for k in ["login","password","sign in","access","locked"])
                else "payments" if any(k in q_lower for k in ["payment","benefit","deposit"])
                else "general")
         sev = "high" if any(k in q_lower for k in ["urgent","broken","error","cannot","can't"]) else "medium"
-        call = {"tool": "CreateTicket",
+        call = {"tool": "EscalateIssue",
                 "arguments": {"summary": f"User query: {query}",
                               "category": cat, "severity": sev}}
-    elif tool == "GetPolicy":
+    elif tool == "PolicyFetch":
         # Map the query to a specific policy section. The naive version
         # passed the raw query as section_id, which never matched
         # policy_db.json keys ("section_1", "section_2", …) and always
@@ -303,11 +303,11 @@ def run_agent(query: str,
         #   2) fall through to `query` field so the tool dispatcher
         #      can still use the KB-fallback path if no topic matches
         section_id = _map_query_to_policy_section(query) or query
-        call = {"tool": "GetPolicy",
+        call = {"tool": "PolicyFetch",
                 "arguments": {"section_id": section_id, "query": query}}
     else:
         # Use the memory-expanded query if a reference was resolved
-        call = {"tool": "SearchKB",
+        call = {"tool": "KBLookup",
                 "arguments": {"query": retrieval_query, "top_k": top_k}}
 
     # (3) execute (schema-validated)
@@ -315,8 +315,8 @@ def run_agent(query: str,
     step["result_preview"] = str(result)[:150]
     trace.append(step)
 
-    # (3a) direct CreateTicket branch — done
-    if tool == "CreateTicket":
+    # (3a) direct EscalateIssue branch — done
+    if tool == "EscalateIssue":
         ticket_answer = (f"Issue escalated.\nTicket ID: {result['ticket_id']}\n"
                           f"Category: {result.get('category')}  "
                           f"Severity: {result.get('severity')}\n"
@@ -334,9 +334,9 @@ def run_agent(query: str,
         chunks = [{"chunk_id": f"policy__{result.get('section_id','')}",
                    "doc_id":   f"policy__{result.get('section_id','')}",
                    "text":     result["text"], "score": 1.0}]
-    # Make it visible in the trace when GetPolicy actually fell back to KB
+    # Make it visible in the trace when PolicyFetch actually fell back to KB
     # retrieval — the auditor flagged that this was hidden before.
-    if result.get("tool") == "GetPolicy_KB_fallback":
+    if result.get("tool") == "PolicyFetch_KB_fallback":
         step["policy_fallback"] = True
         step["policy_note"] = result.get("note", "")
 
@@ -349,7 +349,7 @@ def run_agent(query: str,
     if cgra_enabled:
         id_score = information_density(query, chunks, a_id, b_id, g_id)
         step["id_score"] = round(id_score, 4)
-        if id_score < tau and tool == "SearchKB":
+        if id_score < tau and tool == "KBLookup":
             web = web_scraper_tool(query)
             if web:
                 # Web chunks don't have ce_score; rerank the combined set so
@@ -361,7 +361,7 @@ def run_agent(query: str,
                 step["id_aug"] = round(id_aug, 4)
                 if id_aug < tau_min:
                     ticket = execute_tool(
-                        {"tool": "CreateTicket",
+                        {"tool": "EscalateIssue",
                          "arguments": {"summary": f"Low-confidence: {query}",
                                        "category": "general", "severity": "medium"}})
                     return AgentResponse(
@@ -371,7 +371,7 @@ def run_agent(query: str,
 
     if not chunks:
         ticket = execute_tool(
-            {"tool": "CreateTicket",
+            {"tool": "EscalateIssue",
              "arguments": {"summary": f"No KB answer: {query}",
                            "category": "general", "severity": "medium"}})
         return AgentResponse(
@@ -392,7 +392,7 @@ def run_agent(query: str,
     # (8) POST-generation grounding re-check (CER safety net)
     if use_grounding_recheck and gs < grounding_threshold:
         ticket = execute_tool(
-            {"tool": "CreateTicket",
+            {"tool": "EscalateIssue",
              "arguments": {"summary": f"Ungrounded answer: {query}",
                            "category": "general", "severity": "high"}})
         escalate_text = (f"Answer could not be grounded in the knowledge base.\n"

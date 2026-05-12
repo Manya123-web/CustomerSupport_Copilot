@@ -2,7 +2,12 @@
 
 .PHONY: install chunks train-biencoder train-fusion train-dora train-router train eval-baseline eval-full compare test demo api clean
 
+# Use `python` on Windows, `python3` on macOS/Linux. Override with `make PY=python3.11` if needed.
+ifeq ($(OS),Windows_NT)
+PY := python
+else
 PY := python3
+endif
 
 install:
 	$(PY) -m pip install -r requirements.txt

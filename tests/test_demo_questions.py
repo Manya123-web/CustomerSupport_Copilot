@@ -28,7 +28,7 @@ def test_categories_unique():
 
 def test_account_issue_have_account_keywords():
     """Every account-issue query should contain a ticket-routable keyword,
-    so the keyword router doesn't misroute it to SearchKB."""
+    so the keyword router doesn't misroute it to KBLookup."""
     TICKET_KW = ("log", "password", "sign in", "lock", "access denied",
                   "broken", "error", "account")
     for q, _ in ACCOUNT_ISSUE:

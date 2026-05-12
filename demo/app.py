@@ -30,11 +30,17 @@ Endpoints
     GET  /session/{sid}               inspect a session's stored turns
 """
 from __future__ import annotations
+import asyncio
+import logging
 import os
+import traceback
 from contextlib import asynccontextmanager
+from functools import partial
 from typing import Dict, Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from utils.config import load_config
@@ -42,6 +48,8 @@ from utils.schema import AgentResponse
 from training.evaluation import build_system
 from training.agent import run_agent
 from training.memory import ConversationMemory
+
+logger = logging.getLogger(__name__)
 
 
 class QueryBody(BaseModel):
@@ -68,6 +76,22 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Customer Support Copilot", lifespan=lifespan)
 
+# Allow browser clients to receive responses across origins. Tighten
+# `allow_origins` in production deployments.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/")
+def root():
+    return {"status": "ok",
+            "message": "Customer Support Copilot API is running"}
+
 
 @app.get("/health")
 def health():
@@ -86,7 +110,7 @@ def _get_or_create_memory(session_id: Optional[str]) -> Optional[ConversationMem
 
 
 @app.post("/query", response_model=AgentResponse)
-def query(body: QueryBody):
+async def query(body: QueryBody):
     sys = _SYSTEM.get("sys")
     if not sys:
         raise HTTPException(503, "system not ready")
@@ -95,13 +119,31 @@ def query(body: QueryBody):
         cfg = {**cfg, "agent": {**cfg.get("agent", {}), "top_k": body.top_k}}
 
     memory = _get_or_create_memory(body.session_id)
-    return run_agent(body.query,
-                      retriever=sys["retriever"],
-                      llm_fn=sys["llm_fn"],
-                      reranker=sys["reranker"],
-                      cfg=cfg,
-                      learned_router=sys.get("learned_router"),
-                      memory=memory)
+    try:
+        # run_agent is synchronous and blocks for several seconds during
+        # model inference. Offload to a worker thread so the event loop
+        # stays responsive and the response actually reaches the client.
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            partial(run_agent,
+                    body.query,
+                    retriever=sys["retriever"],
+                    llm_fn=sys["llm_fn"],
+                    reranker=sys["reranker"],
+                    cfg=cfg,
+                    learned_router=sys.get("learned_router"),
+                    memory=memory),
+        )
+        # Serialise explicitly so FastAPI does not silently emit an empty
+        # body when the response model serialisation has any rough edges.
+        return JSONResponse(content=response.model_dump())
+    except HTTPException:
+        raise
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.exception("[/query] failed")
+        raise HTTPException(status_code=500, detail=f"{e}\n{tb}")
 
 
 @app.post("/session/{session_id}/reset")

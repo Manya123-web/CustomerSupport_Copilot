@@ -15,6 +15,7 @@ Call from a notebook:
 """
 from __future__ import annotations
 import json
+import logging
 import os
 import random
 import sys
@@ -22,6 +23,8 @@ from collections import defaultdict
 from typing import List, Dict, Tuple
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -84,8 +87,18 @@ def run_diagnostics(cfg_path: str = "config/full.yaml",
     print(f"DIAGNOSTICS  (config={cfg.get('name', '?')})")
     print("=" * 70)
 
-    with open(cfg["data"]["train_split"]) as f: train_chunks = json.load(f)
-    with open(cfg["data"]["test_split"])  as f: test_chunks  = json.load(f)
+    train_split_path = cfg["data"]["train_split"]
+    test_split_path  = cfg["data"]["test_split"]
+    if not os.path.exists(train_split_path):
+        logger.warning(f"[diagnostics] {train_split_path} not found — "
+                       f"run `make chunks` to generate splits first")
+        return {"error": f"missing {train_split_path}"}
+    if not os.path.exists(test_split_path):
+        logger.warning(f"[diagnostics] {test_split_path} not found — "
+                       f"run `make chunks` to generate splits first")
+        return {"error": f"missing {test_split_path}"}
+    with open(train_split_path) as f: train_chunks = json.load(f)
+    with open(test_split_path)  as f: test_chunks  = json.load(f)
 
     # ── Leakage check 1: document-level disjointness ────────────────────────
     train_docs = {c["doc_id"] for c in train_chunks}
@@ -158,14 +171,14 @@ def run_diagnostics(cfg_path: str = "config/full.yaml",
 
             # Held-out paraphrases (test generalisation)
             held_out = [
-                ("I cannot access my account at all",       "CreateTicket"),
-                ("The sign-in page throws an error",        "CreateTicket"),
-                ("Show me the official policy on SSI",      "GetPolicy"),
-                ("How do work credits accumulate?",         "SearchKB"),
-                ("Who is entitled to Medicare at 65?",      "SearchKB"),
-                ("My online session keeps logging me out",  "CreateTicket"),
-                ("What does regulation 4 actually say?",    "GetPolicy"),
-                ("When do survivor benefits kick in?",      "SearchKB"),
+                ("I cannot access my account at all",       "EscalateIssue"),
+                ("The sign-in page throws an error",        "EscalateIssue"),
+                ("Show me the official policy on SSI",      "PolicyFetch"),
+                ("How do work credits accumulate?",         "KBLookup"),
+                ("Who is entitled to Medicare at 65?",      "KBLookup"),
+                ("My online session keeps logging me out",  "EscalateIssue"),
+                ("What does regulation 4 actually say?",    "PolicyFetch"),
+                ("When do survivor benefits kick in?",      "KBLookup"),
             ]
             correct_te = sum(1 for q, l in held_out if r.predict(q) == l)
             test_acc = correct_te / len(held_out)

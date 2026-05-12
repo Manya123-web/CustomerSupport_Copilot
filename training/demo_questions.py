@@ -7,7 +7,7 @@ behaves on each kind of query:
   1. STANDARD       — answerable directly from the KB
   2. PARAPHRASED    — same intents as STANDARD but worded differently
                       (tests retrieval robustness + learned router)
-  3. ACCOUNT_ISSUE  — should route to CreateTicket, not SearchKB
+  3. ACCOUNT_ISSUE  — should route to EscalateIssue, not KBLookup
   4. OUT_OF_SCOPE   — KB has no good answer → CGRA should escalate
 
 Use `all_demo_questions()` for an iterable, or `demo_by_category()` for

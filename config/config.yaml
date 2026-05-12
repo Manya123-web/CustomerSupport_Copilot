@@ -35,7 +35,7 @@ reranker:
 
 generator:
   base_model:   "google/flan-t5-large"
-  dtype:        "float16"
+  dtype:        "auto"   # auto = float16 on CUDA, float32 on CPU/MPS
   max_new_tokens: 250
   num_beams:    2
   dora_path:    "models/checkpoints/dora_adapters"

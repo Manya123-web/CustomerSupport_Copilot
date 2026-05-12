@@ -3,11 +3,11 @@ from training.agent import select_tool, information_density
 
 
 def test_router_keywords():
-    assert select_tool("I can't log into my account") == "CreateTicket"
-    assert select_tool("What does section 2 say?")    == "GetPolicy"
-    assert select_tool("How do I apply for benefits?") == "SearchKB"
+    assert select_tool("I can't log into my account") == "EscalateIssue"
+    assert select_tool("What does section 2 say?")    == "PolicyFetch"
+    assert select_tool("How do I apply for benefits?") == "KBLookup"
     # default bucket
-    assert select_tool("hello") == "SearchKB"
+    assert select_tool("hello") == "KBLookup"
 
 
 def test_information_density_bounds():

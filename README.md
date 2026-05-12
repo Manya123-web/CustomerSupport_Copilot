@@ -4,7 +4,6 @@ A document-grounded Retrieval-Augmented Generation (RAG) system that answers cus
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![PyTorch](https://img.shields.io/badge/pytorch-2.1%2B-orange)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Manya123-web/CustomerSupport_Copilot/blob/main/notebook/colab.ipynb)
 
 ---
 
@@ -44,7 +43,7 @@ The third behaviour — knowing when *not* to answer — is the central design p
 - **Serving**: FastAPI, Uvicorn
 - **Validation**: Pydantic 2
 - **Metrics**: scikit-learn, NLTK, rouge-score
-- **Notebook**: Jupyter (for chunking + Colab end-to-end run)
+- **Notebook**: Jupyter (for chunking + local end-to-end run)
 
 ---
 
@@ -73,7 +72,7 @@ project/
 │   ├── train.py            CLI: --stage biencoder | fusion | dora | router | all
 │   ├── evaluation.py       CLI: --config ... | --compare
 │   ├── agent.py            CGRA gate + router + linear agent loop
-│   ├── tools.py            pydantic-validated SearchKB / GetPolicy / CreateTicket
+│   ├── tools.py            pydantic-validated KBLookup / PolicyFetch / EscalateIssue
 │   ├── router.py           learned logistic-regression router (opt-in)
 │   ├── memory.py           per-session conversation memory
 │   ├── diagnostics.py      overfit / underfit / leakage checks
@@ -87,8 +86,7 @@ project/
 │   ├── app.py              FastAPI POST /query
 │   └── cli.py              interactive terminal demo
 ├── notebook/
-│   ├── main.ipynb          local thin orchestrator (chunking + eval)
-│   └── colab.ipynb         end-to-end Google Colab notebook
+│   └── main.ipynb          local thin orchestrator (chunking + eval)
 ├── tests/                  pytest suite (offline, runs in seconds)
 ├── experiments/results/    JSON metric dumps from each run
 ├── requirements.txt
@@ -103,7 +101,6 @@ project/
 - Python 3.10 or newer
 - ~6 GB free disk space for the model checkpoints
 - **GPU optional but strongly recommended for training.** Inference also runs on CPU but is much slower.
-  - Colab T4 (free tier) is sufficient for both training and evaluation.
   - Locally: any NVIDIA GPU with ≥6 GB VRAM works in fp16.
 - Internet access on first run (to download base models from Hugging Face).
 
@@ -113,21 +110,7 @@ All Python dependencies are pinned in `requirements.txt`.
 
 ## Setup
 
-### Option A — Google Colab (recommended for first-time users)
-
-1. Click the **Open in Colab** badge at the top of this README. The notebook is `notebook/colab.ipynb`.
-2. `Runtime` → `Change runtime type` → select **T4 GPU**.
-3. Run the cells top-to-bottom. The notebook will:
-   - install dependencies,
-   - clone this repo into `/content/project` (or use a zip if you have one),
-   - download the MultiDoc2Dial dataset from Hugging Face,
-   - build chunks and the 80/20 train/test split,
-   - (optionally) train the bi-encoder and DoRA adapters,
-   - run baseline and full evaluation,
-   - print the comparison table,
-   - run diagnostics and the 30 curated demo questions.
-
-### Option B — Local machine
+### Setup (local machine)
 
 ```bash
 git clone https://github.com/Manya123-web/CustomerSupport_Copilot.git
@@ -138,7 +121,6 @@ make install
 
 # 2) Provide the dataset
 #    Drop multidoc2dial_raw.json into data/raw/
-#    (the Colab notebook can also fetch it from Hugging Face)
 
 # 3) Build chunks and the 80/20 train/test split
 #    This runs notebook/main.ipynb headless; it writes:
@@ -161,10 +143,10 @@ The pipeline has four stages: **install → chunk → train → evaluate**, plus
 Each stage can be run independently or all together.
 
 ```bash
-make train-biencoder   # ~5 min on T4   — fine-tunes the dense retriever
-make train-fusion      # <1 min          — fits α/β for hybrid fusion
-make train-dora        # ~15–20 min on T4 — DoRA adapters + DPO preference loss
-make train-router      # <1 min          — opt-in learned router
+make train-biencoder   # ~5 min on a recent GPU   — fine-tunes the dense retriever
+make train-fusion      # <1 min                   — fits α/β for hybrid fusion
+make train-dora        # ~15–20 min on a recent GPU — DoRA adapters + DPO preference loss
+make train-router      # <1 min                   — opt-in learned router
 make train             # all of the above, in order
 ```
 
@@ -269,10 +251,6 @@ Reference results on the 20 hand-written MultiDoc2Dial queries:
 
 ## Troubleshooting
 
-### Colab fails to find the project directory
-
-The `Open in Colab` badge serves the notebook from GitHub with no project files on the VM. Cell 6 of `notebook/colab.ipynb` now `git clone`s the repo automatically as a fallback. If the clone fails (network restrictions, fork URL drift), upload `CustomerSupportCopilot_restructured.zip` via Colab's file pane and re-run the cell.
-
 ### Eval stops with `Fusion weights not found`
 
 Evaluation is read-only. Run training first:
@@ -293,11 +271,11 @@ Same policy as above. Either run `make train-router`, or set `agent.router_autot
 
 ### GPU shows zero load while encoding takes minutes
 
-The bi-encoder and cross-encoder are now constructed with explicit `device="cuda"` placement, so this should no longer happen. If you still see CPU-only behaviour, confirm `torch.cuda.is_available()` returns `True` and that PyTorch was installed with CUDA support (not the CPU-only wheel).
+The bi-encoder and cross-encoder are now constructed with an explicit device selected by `utils.device.get_device()`, so this should no longer happen on a machine that actually has a working CUDA GPU. If you still see CPU-only behaviour, confirm `torch.cuda.is_available()` returns `True` and that PyTorch was installed with CUDA support (not the CPU-only wheel).
 
 ### `RuntimeError: Expected all tensors on the same device`
 
-This was caused by `device_map="auto"` partially placing the Flan-T5 model under some accelerate versions. The current `models/base_model.py` does an explicit `model.to("cuda")` after load and prints the actual device of the first parameter at startup. If you still see this, check the `[base_model]` log line for the device string.
+This was caused by `device_map="auto"` partially placing the Flan-T5 model under some accelerate versions. The current `models/base_model.py` does an explicit `model.to(get_device())` after load and prints the actual device of the first parameter at startup. If you still see this, check the `[base_model]` log line for the device string.
 
 ### NLTK `punkt_tab` download fails
 
@@ -310,7 +288,7 @@ python -c "import nltk; nltk.download('punkt'); nltk.download('punkt_tab')"
 
 The agent has a regex sentence-split fallback, so requests will still complete, but quality is mildly degraded without `punkt_tab`.
 
-### DoRA training loss is NaN on Colab T4
+### DoRA training loss is NaN on a GPU
 
 Flan-T5-large is known to overflow in pure fp16. The DPO loop runs the model forward in fp16 but computes the loss in fp32 (no autocast). If you still see NaNs, switch the generator dtype to `float32` in `config/config.yaml` (`generator.dtype: "float32"`) — slower but stable.
 

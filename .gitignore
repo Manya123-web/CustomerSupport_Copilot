@@ -1,0 +1,33 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# pytest
+.pytest_cache/
+pytest-cache-files-*/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated ML artifacts (do not commit these)
+data/processed/
+data/splits/
+models/checkpoints/
+experiments/results/
+
+# Environment
+.env
+*.env
+.venv/
+venv/
+env/
+
+# Logs
+*.log
+logs/

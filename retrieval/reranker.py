@@ -13,6 +13,7 @@ import numpy as np
 from sentence_transformers import CrossEncoder
 
 from models.quantization import quantize_sentence_transformer, cuda_available
+from utils.device import get_device
 
 
 class CEReranker:
@@ -26,10 +27,11 @@ class CEReranker:
             halves VRAM and is ~1.4x faster; "float32" on CPU (no fp16
             hardware support).
         """
-        target_device = "cuda" if cuda_available() else "cpu"
+        target_device = get_device()       # runtime detection
+        target_device_str = str(target_device)
         try:
             self.model = CrossEncoder(model_name, max_length=max_length,
-                                       device=target_device)
+                                       device=target_device_str)
         except TypeError:
             self.model = CrossEncoder(model_name, max_length=max_length)
         self.model = quantize_sentence_transformer(self.model, dtype)

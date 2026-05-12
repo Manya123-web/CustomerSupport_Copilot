@@ -6,7 +6,7 @@ Proves that the LearnedRouter is a real trained model (not a lookup table):
   1. Before training, predict() raises — no fall-through hardcoded logic.
   2. After fit() on the canonical labelled set, it classifies held-out
      PARAPHRASES the keyword router cannot (e.g. "stuck at the login page"
-     is not in the keyword list but should map to CreateTicket).
+     is not in the keyword list but should map to EscalateIssue).
   3. Retraining with shuffled labels produces different weights (proves
      the weights depend on the data, not a fixed init).
 
@@ -47,11 +47,11 @@ def test_router_learns_paraphrases():
     # Held-out paraphrases — NONE of these appear verbatim in ROUTER_TRAIN.
     # If the router were memorising, it would misclassify them.
     held_out = [
-        ("I cannot access my account at all",       "CreateTicket"),
-        ("The sign-in page throws an error",        "CreateTicket"),
-        ("Show me the official policy on SSI",      "GetPolicy"),
-        ("How do work credits accumulate?",         "SearchKB"),
-        ("Who is entitled to Medicare at 65?",      "SearchKB"),
+        ("I cannot access my account at all",       "EscalateIssue"),
+        ("The sign-in page throws an error",        "EscalateIssue"),
+        ("Show me the official policy on SSI",      "PolicyFetch"),
+        ("How do work credits accumulate?",         "KBLookup"),
+        ("Who is entitled to Medicare at 65?",      "KBLookup"),
     ]
     correct = sum(1 for q, y in held_out if r.predict(q) == y)
     # A fair threshold — MiniLM + logistic on ~35 examples typically

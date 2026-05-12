@@ -15,6 +15,7 @@ from sentence_transformers import SentenceTransformer, InputExample, losses
 from torch.utils.data import DataLoader
 
 from models.quantization import quantize_sentence_transformer, cuda_available
+from utils.device import get_device
 
 
 def load_embedding_model(base_model: str, fine_tuned_path: str | None = None,
@@ -29,15 +30,18 @@ def load_embedding_model(base_model: str, fine_tuned_path: str | None = None,
         "float32" (default on CPU), "float16" (GPU), "bfloat16" (GPU).
         int8 is not supported for SentenceTransformer — falls back to fp16.
     """
-    # Construct on CUDA when available — sentence-transformers' .encode()
-    # path infers device from the underlying nn.Module's location, so the
-    # model must actually live on cuda or it silently falls back to CPU
-    # (the symptom: "GPU shows zero load while encoding takes minutes").
-    target_device = "cuda" if cuda_available() else "cpu"
+    # Construct on the best available device. Universal selection covers
+    # CUDA (NVIDIA/AMD), MPS (Apple Silicon) and CPU. Called at runtime so
+    # the selection reflects the real hardware state — sentence-transformers'
+    # .encode() path infers device from the underlying nn.Module's location,
+    # so the model must actually live on the right device or the GPU shows
+    # zero load while encoding takes minutes.
+    target_device = get_device()
+    target_device_str = str(target_device)
     if use_fine_tuned and fine_tuned_path and os.path.isdir(fine_tuned_path):
-        model = SentenceTransformer(fine_tuned_path, device=target_device)
+        model = SentenceTransformer(fine_tuned_path, device=target_device_str)
     else:
-        model = SentenceTransformer(base_model, device=target_device)
+        model = SentenceTransformer(base_model, device=target_device_str)
     # Apply precision AFTER loading — sentence-transformers doesn't accept
     # a dtype kwarg at construction time.
     model = quantize_sentence_transformer(model, dtype)

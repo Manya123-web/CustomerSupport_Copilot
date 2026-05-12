@@ -1,7 +1,7 @@
 """
 training/tools.py
 -----------------
-Three support tools (SearchKB / GetPolicy / CreateTicket) plus an
+Three support tools (KBLookup / PolicyFetch / EscalateIssue) plus an
 `execute_tool()` dispatcher that validates arguments against pydantic
 schemas before running anything.
 
@@ -28,7 +28,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from utils.schema import (
-    ToolCall, SearchKBArgs, GetPolicyArgs, CreateTicketArgs,
+    ToolCall, KBLookupArgs, PolicyFetchArgs, EscalateIssueArgs,
 )
 
 
@@ -50,42 +50,49 @@ POLICY_DB: Dict[str, str] = _load_policy_db()
 
 
 # ── Individual tool functions ────────────────────────────────────────────────
-def search_kb(args: SearchKBArgs, retriever) -> Dict[str, Any]:
+def kb_lookup(args: KBLookupArgs, retriever) -> Dict[str, Any]:
     chunks = retriever.retrieve(args.query, top_k=args.top_k)
-    return {"tool": "SearchKB", "results": chunks}
+    return {"tool": "KBLookup", "results": chunks}
 
 
-def get_policy(args: GetPolicyArgs, retriever=None) -> Dict[str, Any]:
+def policy_fetch(args: PolicyFetchArgs, retriever=None) -> Dict[str, Any]:
     text = POLICY_DB.get(args.section_id.lower().strip(), "")
     if text:
-        return {"tool": "GetPolicy", "section_id": args.section_id, "text": text}
+        return {"tool": "PolicyFetch", "section_id": args.section_id, "text": text}
     if args.query and retriever is not None:
         chunks = retriever.retrieve(args.query, top_k=5)
         if chunks:
-            return {"tool": "GetPolicy_KB_fallback", "results": chunks,
+            return {"tool": "PolicyFetch_KB_fallback", "results": chunks,
                     "note": "Section not found — served from KB"}
-    return {"tool": "GetPolicy", "section_id": args.section_id,
+    return {"tool": "PolicyFetch", "section_id": args.section_id,
             "text": "", "error": f"Not found: {args.section_id}"}
 
 
-def create_ticket(args: CreateTicketArgs) -> Dict[str, Any]:
+def escalate_issue(args: EscalateIssueArgs) -> Dict[str, Any]:
     tid = f"TKT-{random.randint(10000, 99999)}"
-    return {"tool": "CreateTicket", "ticket_id": tid,
+    return {"tool": "EscalateIssue", "ticket_id": tid,
             "summary":  args.summary,
             "category": args.category,
             "severity": args.severity}
+
+
+# Legacy aliases — keep old function names working for any external caller
+# while the canonical names above are what new code should use.
+search_kb = kb_lookup
+get_policy = policy_fetch
+create_ticket = escalate_issue
 
 
 # ── Dispatcher (pydantic-validated) ──────────────────────────────────────────
 def execute_tool(call: Dict[str, Any], retriever=None) -> Dict[str, Any]:
     validated = ToolCall(**call)
     tool, args_dict = validated.tool, validated.arguments
-    if tool == "SearchKB":
-        return search_kb(SearchKBArgs(**args_dict), retriever)
-    if tool == "GetPolicy":
-        return get_policy(GetPolicyArgs(**args_dict), retriever)
-    if tool == "CreateTicket":
-        return create_ticket(CreateTicketArgs(**args_dict))
+    if tool == "KBLookup":
+        return kb_lookup(KBLookupArgs(**args_dict), retriever)
+    if tool == "PolicyFetch":
+        return policy_fetch(PolicyFetchArgs(**args_dict), retriever)
+    if tool == "EscalateIssue":
+        return escalate_issue(EscalateIssueArgs(**args_dict))
     return {"error": f"Unknown tool: {tool}"}
 
 

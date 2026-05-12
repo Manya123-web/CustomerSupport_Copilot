@@ -6,6 +6,7 @@ so precision is consistent with the bi-encoder and cross-encoder. Also
 attaches saved DoRA adapters if present.
 """
 from __future__ import annotations
+import logging
 import os
 from typing import Tuple
 
@@ -13,6 +14,9 @@ import torch
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 from models.quantization import quantized_kwargs, cuda_available, vram_gb
+from utils.device import get_device
+
+logger = logging.getLogger(__name__)
 
 
 def load_base_llm(model_id: str, dtype: str = "float16") -> Tuple:
@@ -33,7 +37,11 @@ def load_base_llm(model_id: str, dtype: str = "float16") -> Tuple:
     `device_map="auto"` machinery (it must own placement so it can
     register custom buffers in the right place).
     """
-    if cuda_available():
+    # Universal device selection (NVIDIA/AMD/Apple Silicon/CPU). Called at
+    # runtime so the selection reflects the actual hardware state, not the
+    # state at module-import time.
+    device = get_device()
+    if device.type == "cuda":
         torch.cuda.empty_cache()
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     kwargs = quantized_kwargs(dtype, for_="seq2seq")
@@ -41,15 +49,20 @@ def load_base_llm(model_id: str, dtype: str = "float16") -> Tuple:
     model.eval()
     # int8/bitsandbytes brings its own device_map; never .to() those.
     is_int8 = "quantization_config" in kwargs
-    if cuda_available() and not is_int8:
-        model = model.to("cuda")
-    if cuda_available():
-        try:
-            actual_device = next(model.parameters()).device
-        except StopIteration:
-            actual_device = "?"
+    if not is_int8:
+        model = model.to(device)
+    try:
+        actual_device = next(model.parameters()).device
+    except StopIteration:
+        actual_device = device
+    logger.info(f"[base_model] device={actual_device}  model={model_id}  "
+                f"precision={dtype}")
+    if device.type == "cuda":
         print(f"[base_model] {model_id}  precision={dtype}  "
               f"device={actual_device}  VRAM={vram_gb():.2f}GB")
+    else:
+        print(f"[base_model] {model_id}  precision={dtype}  "
+              f"device={actual_device}")
     return model, tokenizer
 
 

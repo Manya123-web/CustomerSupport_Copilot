@@ -137,6 +137,67 @@ def _train_fusion_and_cache(cfg, encoder, train_chunks, cache_path):
     return alpha, beta
 
 
+def _should_retrain_fusion(alpha, beta, encoder, train_chunks, cfg,
+                            threshold: float = 0.5,
+                            n_probe: int = 20,
+                            seed: int = 42):
+    """
+    Quick MRR probe on a small slice of the training set to decide whether
+    the cached fusion weights still perform reasonably.
+
+    Returns
+    -------
+    (should_retrain: bool, mrr: float | None)
+        should_retrain is True iff MRR < threshold. mrr may be None if the
+        probe could not run (e.g. fewer than n_probe distinct chunks).
+    """
+    import random as _random
+    if not train_chunks:
+        return False, None
+    rnd = _random.Random(seed)
+    sample = rnd.sample(train_chunks, min(n_probe, len(train_chunks)))
+    if not sample:
+        return False, None
+    # Build an embedding matrix over the full training set so the probe
+    # has somewhere to search. This is small (<<10k chunks) and cheap.
+    try:
+        texts = [c["text"] for c in train_chunks]
+        embs = encoder.encode(texts, batch_size=64, show_progress_bar=False,
+                               convert_to_numpy=True,
+                               normalize_embeddings=True).astype("float32")
+        idx = build_faiss_index(embs, path=None)
+    except Exception:
+        return False, None
+
+    mrr = 0.0
+    n = 0
+    for c in sample:
+        q = " ".join(c["text"].split()[:10])
+        try:
+            qv = encoder.encode([q], normalize_embeddings=True,
+                                 convert_to_numpy=True)[0].astype("float32")
+            D, I = idx.search(qv[None, :], 10)
+        except Exception:
+            continue
+        # Apply the cached fusion weights to (cosine, lexical) just like
+        # the retriever does, so the MRR reflects the cached system.
+        scored = []
+        for score, ix in zip(D[0], I[0]):
+            cand = train_chunks[ix]
+            lex = lexical_overlap(q, cand["text"])
+            scored.append((alpha * float(score) + beta * lex, cand["doc_id"]))
+        scored.sort(reverse=True)
+        for rank, (_, did) in enumerate(scored, 1):
+            if did == c["doc_id"]:
+                mrr += 1.0 / rank
+                break
+        n += 1
+    if n == 0:
+        return False, None
+    mrr_avg = mrr / n
+    return (mrr_avg < threshold), mrr_avg
+
+
 def build_system(cfg):
     print(f"[eval] building system '{cfg.get('name', '?')}'")
 
@@ -185,10 +246,20 @@ def build_system(cfg):
             os.path.dirname(cfg["embeddings"]["index_path_ft"] if use_ft
                             else cfg["embeddings"]["index_path_base"]),
             f"fusion_weights_{'ft' if use_ft else 'base'}.json")
+        env_allows_train = os.environ.get("COPILOT_ALLOW_EVAL_TRAIN", "0") == "1"
         if not os.path.exists(fusion_cache):
-            print("[fusion] no cache found — training from scratch")
-            alpha, beta = _train_fusion_and_cache(
-                cfg, encoder, train_chunks, fusion_cache)
+            if env_allows_train:
+                print("[fusion] no cache found — training from scratch "
+                      "(COPILOT_ALLOW_EVAL_TRAIN=1)")
+                alpha, beta = _train_fusion_and_cache(
+                    cfg, encoder, train_chunks, fusion_cache)
+            else:
+                raise FileNotFoundError(
+                    f"Fusion weights not found at {fusion_cache!r}. "
+                    f"Evaluation is read-only by design. Run "
+                    f"`make train-fusion` first, or set "
+                    f"COPILOT_ALLOW_EVAL_TRAIN=1 for a one-off override."
+                )
         else:
             with open(fusion_cache) as _f:
                 cached = _json.load(_f)
@@ -196,11 +267,16 @@ def build_system(cfg):
             threshold = cfg["fusion"].get("retrain_threshold", 0.5)
             should_retrain, fusion_mrr = _should_retrain_fusion(
                 alpha, beta, encoder, train_chunks, cfg, threshold)
-            if should_retrain:
+            if should_retrain and env_allows_train:
                 print(f"[fusion] MRR={fusion_mrr:.3f} below threshold "
-                      f"{threshold:.3f} — retraining")
+                      f"{threshold:.3f} — retraining "
+                      f"(COPILOT_ALLOW_EVAL_TRAIN=1)")
                 alpha, beta = _train_fusion_and_cache(
                     cfg, encoder, train_chunks, fusion_cache)
+            elif should_retrain:
+                print(f"[fusion] MRR={fusion_mrr:.3f} below threshold "
+                      f"{threshold:.3f} — keeping cached weights (eval is "
+                      f"read-only; rerun `make train-fusion` to refresh)")
             else:
                 print(f"[fusion] cache hit — performance OK, "
                       f"α={alpha:.3f} β={beta:.3f}  (MRR={fusion_mrr:.3f})")

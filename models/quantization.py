@@ -39,6 +39,33 @@ def cuda_available() -> bool:
     return torch.cuda.is_available()
 
 
+def get_dtype(cfg: dict | None = None) -> torch.dtype:
+    """
+    Return the best dtype for the current device.
+    Reads config if provided; falls back to device-based auto-selection.
+
+    Resolves "auto" by calling `utils.device.get_device()` at runtime so
+    the selection reflects the actual hardware (CUDA → fp16, CPU/MPS → fp32).
+    """
+    from utils.device import get_device   # local import to avoid cycles
+
+    dtype_str = (cfg or {}).get("generator", {}).get("dtype", "auto")
+    dtype_str = (dtype_str or "auto").lower()
+
+    if dtype_str in ("float16", "fp16", "half"):
+        return torch.float16
+    if dtype_str in ("float32", "fp32", "full"):
+        return torch.float32
+    if dtype_str in ("bfloat16", "bf16"):
+        return torch.bfloat16
+
+    # "auto" — decide based on the actual device at call time
+    device = get_device()
+    if device.type == "cuda":
+        return torch.float16   # fp16 is GPU-optimised, saves VRAM
+    return torch.float32       # fp32 is stable on CPU and MPS
+
+
 def resolve_dtype(name: str) -> torch.dtype:
     """
     Map a human-readable precision name to a torch.dtype.
@@ -48,7 +75,10 @@ def resolve_dtype(name: str) -> torch.dtype:
     fp32 on most CPUs — half precision only helps on hardware that
     natively supports it.
     """
-    name = name.lower()
+    name = (name or "auto").lower()
+    if name == "auto":
+        # Defer to get_dtype() for universal-device-aware resolution
+        return get_dtype()
     if name in ("fp32", "float32", "full"):
         return torch.float32
     if name in ("fp16", "float16", "half"):
@@ -120,7 +150,7 @@ def quantized_kwargs(precision: str, for_: str = "seq2seq") -> Dict[str, Any]:
     # can split layers across cuda:0/cpu, which then blows up later
     # at `inputs.to(model.device)` with "Expected all tensors on the
     # same device". The caller (load_base_llm) now does an explicit
-    # `.to("cuda")` after load — one device, one place, no magic.
+    # `.to(get_device())` after load — one device, one place, no magic.
     return kwargs
 
 

@@ -5,19 +5,19 @@ Learned router for the tool-selection step.
 
 The default router in agent.py is keyword-based: deterministic, fast, and
 easy to debug — but it fails on paraphrases (e.g. "stuck at the login
-screen" should go to CreateTicket but doesn't match the keyword list).
+screen" should go to EscalateIssue but doesn't match the keyword list).
 
 This module implements a TRAINABLE alternative. It fits a multinomial
 logistic-regression head on top of frozen sentence-transformer embeddings.
-No hardcoded rules; it learns the classes {SearchKB, GetPolicy,
-CreateTicket} from labelled examples.
+No hardcoded rules; it learns the classes {KBLookup, PolicyFetch,
+EscalateIssue} from labelled examples.
 
 Usage
 -----
     from training.router import LearnedRouter
     r = LearnedRouter()
-    r.fit(queries, labels)      # labels: list of "SearchKB" | "GetPolicy" | "CreateTicket"
-    r.predict("I can't log in") # -> "CreateTicket"
+    r.fit(queries, labels)      # labels: list of "KBLookup" | "PolicyFetch" | "EscalateIssue"
+    r.predict("I can't log in") # -> "EscalateIssue"
     r.save("models/checkpoints/router.npz")
     r2 = LearnedRouter.load("models/checkpoints/router.npz", encoder=r.encoder)
 
@@ -36,7 +36,7 @@ import numpy as np
 class LearnedRouter:
     """Frozen MiniLM + logistic-regression head trained on labelled intents."""
 
-    CLASSES = ("SearchKB", "GetPolicy", "CreateTicket")
+    CLASSES = ("KBLookup", "PolicyFetch", "EscalateIssue")
 
     def __init__(self, encoder=None,
                  base_model: str = "sentence-transformers/all-MiniLM-L6-v2",
@@ -127,43 +127,43 @@ class LearnedRouter:
 # sentence-transformer embeddings, a logistic head reaches >90% val accuracy
 # on this size.
 ROUTER_TRAIN = [
-    # SearchKB
-    ("What documents do I need to apply for benefits?",             "SearchKB"),
-    ("How many work credits are needed for retirement?",             "SearchKB"),
-    ("Who qualifies for disability insurance?",                      "SearchKB"),
-    ("At what age can I start collecting retirement benefits?",      "SearchKB"),
-    ("Explain the difference between SSI and SSDI",                  "SearchKB"),
-    ("What is the earnings test?",                                   "SearchKB"),
-    ("How do I appeal a denied claim?",                              "SearchKB"),
-    ("Are Social Security benefits taxable?",                        "SearchKB"),
-    ("Can a spouse claim benefits on my record?",                    "SearchKB"),
-    ("How are survivor benefits calculated?",                        "SearchKB"),
-    ("When should I enroll in Medicare?",                            "SearchKB"),
-    ("What is the maximum monthly benefit?",                         "SearchKB"),
-    ("How do I request a new Social Security card?",                 "SearchKB"),
-    ("How long does processing take?",                               "SearchKB"),
-    # GetPolicy
-    ("What does section 1 say?",                                     "GetPolicy"),
-    ("Show me the policy on disability",                             "GetPolicy"),
-    ("Which regulation governs survivor benefits?",                  "GetPolicy"),
-    ("Give me the rule for Medicare enrollment",                     "GetPolicy"),
-    ("Cite the statute for earnings test",                           "GetPolicy"),
-    ("Pull up section 3",                                            "GetPolicy"),
-    ("What is the policy for SSI?",                                  "GetPolicy"),
-    ("Rule book on early retirement",                                "GetPolicy"),
-    # CreateTicket
-    ("I can't log into my account",                                  "CreateTicket"),
-    ("Stuck at the login page",                                      "CreateTicket"),
-    ("Forgot my password, help",                                     "CreateTicket"),
-    ("My account is locked",                                         "CreateTicket"),
-    ("I am locked out of the portal",                                "CreateTicket"),
-    ("Sign in is broken",                                            "CreateTicket"),
-    ("Getting an error when I try to access my benefits",            "CreateTicket"),
-    ("Unable to reset my password",                                  "CreateTicket"),
-    ("My account shows the wrong information",                       "CreateTicket"),
-    ("I keep getting access denied",                                 "CreateTicket"),
-    ("Website not working for me",                                   "CreateTicket"),
-    ("My portal says I'm locked out",                                "CreateTicket"),
+    # KBLookup
+    ("What documents do I need to apply for benefits?",             "KBLookup"),
+    ("How many work credits are needed for retirement?",             "KBLookup"),
+    ("Who qualifies for disability insurance?",                      "KBLookup"),
+    ("At what age can I start collecting retirement benefits?",      "KBLookup"),
+    ("Explain the difference between SSI and SSDI",                  "KBLookup"),
+    ("What is the earnings test?",                                   "KBLookup"),
+    ("How do I appeal a denied claim?",                              "KBLookup"),
+    ("Are Social Security benefits taxable?",                        "KBLookup"),
+    ("Can a spouse claim benefits on my record?",                    "KBLookup"),
+    ("How are survivor benefits calculated?",                        "KBLookup"),
+    ("When should I enroll in Medicare?",                            "KBLookup"),
+    ("What is the maximum monthly benefit?",                         "KBLookup"),
+    ("How do I request a new Social Security card?",                 "KBLookup"),
+    ("How long does processing take?",                               "KBLookup"),
+    # PolicyFetch
+    ("What does section 1 say?",                                     "PolicyFetch"),
+    ("Show me the policy on disability",                             "PolicyFetch"),
+    ("Which regulation governs survivor benefits?",                  "PolicyFetch"),
+    ("Give me the rule for Medicare enrollment",                     "PolicyFetch"),
+    ("Cite the statute for earnings test",                           "PolicyFetch"),
+    ("Pull up section 3",                                            "PolicyFetch"),
+    ("What is the policy for SSI?",                                  "PolicyFetch"),
+    ("Rule book on early retirement",                                "PolicyFetch"),
+    # EscalateIssue
+    ("I can't log into my account",                                  "EscalateIssue"),
+    ("Stuck at the login page",                                      "EscalateIssue"),
+    ("Forgot my password, help",                                     "EscalateIssue"),
+    ("My account is locked",                                         "EscalateIssue"),
+    ("I am locked out of the portal",                                "EscalateIssue"),
+    ("Sign in is broken",                                            "EscalateIssue"),
+    ("Getting an error when I try to access my benefits",            "EscalateIssue"),
+    ("Unable to reset my password",                                  "EscalateIssue"),
+    ("My account shows the wrong information",                       "EscalateIssue"),
+    ("I keep getting access denied",                                 "EscalateIssue"),
+    ("Website not working for me",                                   "EscalateIssue"),
+    ("My portal says I'm locked out",                                "EscalateIssue"),
 ]
 
 
