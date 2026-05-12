@@ -35,3 +35,4 @@ gradio>=4.0
 # === dev / test ===
 pytest>=8.0
 matplotlib>=3.8
+ddgs

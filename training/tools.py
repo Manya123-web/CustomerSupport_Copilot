@@ -23,7 +23,7 @@ import re
 import time
 from pathlib import Path
 from typing import Dict, Any, List
-
+from ddgs import DDGS
 import requests
 from bs4 import BeautifulSoup
 
@@ -143,7 +143,7 @@ def _cache_lookup(query: str) -> str:
 def web_scraper_tool(query: str, max_results: int = 2,
                      max_retries: int = 3, base_delay: float = 1.0,
                      use_cache: bool = True) -> List[Dict[str, Any]]:
-    """Fetch web chunks. `use_cache=False` forces the real DDG path."""
+    """Fetch web chunks using DuckDuckGo search (ddgs library)."""
     if use_cache:
         cached = _cache_lookup(query)
         if cached:
@@ -154,16 +154,13 @@ def web_scraper_tool(query: str, max_results: int = 2,
     urls: List[str] = []
     for attempt in range(max_retries):
         try:
-            ddg = (f"https://api.duckduckgo.com/?q={requests.utils.quote(query)}"
-                   "&format=json&no_html=1")
-            resp = requests.get(ddg, timeout=5, headers=_HTTP_HEADERS)
-            if resp.status_code == 429:
-                time.sleep(base_delay * (2 ** attempt)); continue
-            data = resp.json()
-            urls = [t.get("FirstURL", "") for t in data.get("RelatedTopics", [])[:max_results]
-                    if t.get("FirstURL")]
-            break
-        except Exception:
+            with DDGS() as ddgs:
+                results = list(ddgs.text(query, max_results=max_results))
+                urls = [r.get("href") for r in results if r.get("href")]
+            if urls:
+                break
+        except Exception as e:
+            print(f"DDGS attempt {attempt+1} failed: {e}")
             time.sleep(base_delay * (2 ** attempt))
 
     if not urls:
@@ -177,7 +174,7 @@ def web_scraper_tool(query: str, max_results: int = 2,
                 soup = BeautifulSoup(page.text, "html.parser")
                 for tag in soup(["script", "style", "nav", "footer", "header"]):
                     tag.decompose()
-                text  = re.sub(r"\s+", " ", soup.get_text()).strip()
+                text = re.sub(r"\s+", " ", soup.get_text()).strip()
                 words = text.split()
                 for i in range(0, min(len(words), 450), 150):
                     ct = " ".join(words[i:i+150])

@@ -375,6 +375,12 @@ def run_agent(query: str,
                 # Web chunks don't have ce_score; rerank the combined set so
                 # everything feeding the second gate is on the same scale
                 chunks = chunks + web
+                trace.append({
+                        "step": len(trace) + 1,
+                        "tool": "WebScraper",
+                        "query": query,
+                        "results_count": len(web)
+                })
                 if rerank_enabled and reranker is not None:
                     chunks = reranker.rerank(query, chunks, top_n=max(5, top_k))
                 id_aug = information_density(query, chunks, a_id, b_id, g_id)
