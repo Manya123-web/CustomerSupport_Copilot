@@ -60,7 +60,7 @@ cgra:
   g_id:        0.2            # specificity weight
 
 grounding:
-  threshold:   0.08           # below → escalate
+  threshold:   0.25           # below → escalate
 
 agent:
   top_k:       5

@@ -28,7 +28,8 @@ import nltk
 from utils.metrics import FULL_STOP, grounding_score as _grounding
 from utils.schema import AgentResponse
 from training.tools import execute_tool, web_scraper_tool
-
+import logging
+logger = logging.getLogger(__name__)
 
 # Lazy one-time NLTK resource fetch so imports stay cheap
 _NLTK_READY = False
@@ -187,23 +188,42 @@ def generate_answer(query: str, chunks: List[Dict[str, Any]],
     first_doc = citations[0].split("__")[0] if citations else "KB"
     # `history_prefix` is empty for turn 1; for turn 2+ it contains the
     # "Previous conversation: ..." block from ConversationMemory
+    # prompt = (
+    #     "You are a customer support agent.\n"
+    #     f"Answer ONLY using the context. Start with [doc_id: {first_doc}].\n"
+    #     "Be specific and complete.\n\n"
+    #     f"{history_prefix}"
+    #     f"Context:\n{context.strip()}\n\n"
+    #     f"Question: {query}\n\nAnswer [cite first]:"
+    # )
     prompt = (
-        "You are a customer support agent.\n"
-        f"Answer ONLY using the context. Start with [doc_id: {first_doc}].\n"
-        "Be specific and complete.\n\n"
-        f"{history_prefix}"
-        f"Context:\n{context.strip()}\n\n"
-        f"Question: {query}\n\nAnswer [cite first]:"
-    )
-    resp   = llm_fn(prompt)
-    answer = resp[0]["generated_text"].strip()
-    if len(answer) < 5:
-        answer = "Sorry, could not generate a meaningful answer."
+    "You are a customer support agent. Answer the user's question using ONLY the context below.\n"
+    "Do not mention document IDs. Be specific and helpful.\n\n"
+    f"{history_prefix}"
+    f"Context:\n{context.strip()}\n\n"
+    f"Question: {query}\n\nAnswer:"
+)
+    
+    # resp   = llm_fn(prompt)
+    # answer = resp[0]["generated_text"].strip()
+    # if len(answer) < 5:
+    #     answer = "Sorry, could not generate a meaningful answer."
+    try:
+        print(f"[DEBUG] LLM input prompt : {prompt}")
+        resp = llm_fn(prompt)
+        print(f"[DEBUG] LLM response: {resp}")
 
+        answer = resp[0]["generated_text"].strip()
+    except Exception as e:
+        logger.error(f"LLM failed: {e}")
+        answer = ""
     gs = _grounding(answer, context)
+    # if gs < grounding_threshold:
+    #     answer = _best_sentence(query, context)
+    #     gs     = _grounding(answer, context)
     if gs < grounding_threshold:
-        answer = _best_sentence(query, context)
-        gs     = _grounding(answer, context)
+        answer = "I couldn't find a reliable answer in the provided documents. Please rephrase your question or contact support."
+        gs = 0.0
     return answer, citations, gs, context
 
 
@@ -368,7 +388,15 @@ def run_agent(query: str,
                         final_answer=f"No confident answer.\nTicket: {ticket['ticket_id']}",
                         ticket=ticket, id_score=id_score, tool_trace=trace,
                         latency_ms=(time.perf_counter() - t0) * 1000)
-
+    # (6.5) Hard rejection for very low confidence queries (prevents LLM from guessing)
+    MIN_ID_SCORE = 0.30   # can also read from config if you prefer
+    if id_score < MIN_ID_SCORE:
+        return AgentResponse(
+            final_answer="I'm not confident I have the right information for that. Please ask a clear question.",
+            id_score=id_score,
+            tool_trace=trace,
+            latency_ms=(time.perf_counter() - t0) * 1000
+        )
     if not chunks:
         ticket = execute_tool(
             {"tool": "EscalateIssue",
